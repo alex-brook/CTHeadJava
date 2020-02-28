@@ -1,7 +1,6 @@
 package head;
 
 import javafx.scene.image.Image;
-import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
 import javafx.scene.paint.Color;
 
@@ -41,12 +40,14 @@ public class Head {
 
     private short[][][] cthead;
     private float[][][] pixels;
+    private short[] equaliseMap;
 
     private float scaleFactor;
     private int currentSlice;
     private int maxSlice;
     private View currentView;
     private boolean mip;
+    private boolean equalised;
 
     private short max;
     private short min;
@@ -59,15 +60,17 @@ public class Head {
         this.currentSlice = 0;
         mip = false;
 
-        load(fname);
-        pixels = mapPixels();
+        cthead = load(fname);
+        equaliseMap = equalise(cthead);
+        equalised = false;
+        pixels = mapPixels(equalised);
         setZoom(scaleFactor);
         setView(View.TOP);
         updateImageDimensions();
         refresh();
     }
 
-    public void load(String fname) {
+    public short[][][] load(String fname) {
         try {
             File file = new File(fname);
             DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)));
@@ -91,23 +94,53 @@ public class Head {
                     }
                 }
             }
+            return cthead;
         } catch (IOException e) {
             System.err.println("Could not load cthead data");
             System.err.println(e);
+            return null;
         }
     }
 
-    private float[][][] mapPixels() {
+    private short[] equalise(short[][][] cthead) {
+        int len = max - min + 1;
+        short[] hist = new short[len];
+        for(int z = 0; z < Z_LEN; z++) {
+            for (int y = 0; y < Y_LEN; y++) {
+                for (int x = 0; x < X_LEN; x++) {
+                    hist[cthead[z][y][x] - min]++;
+                }
+            }
+        }
+
+        short[] cumDist = new short[len];
+        short t = hist[0];
+        cumDist[0] = t;
+        for (int i = 1; i < len; i++) {
+            t += hist[i];
+        }
+        return cumDist;
+    }
+
+    private float[][][] mapPixels(boolean useEqualisation) {
         float[][][] pixels = new float[Z_LEN][Y_LEN][X_LEN];
         for (int z = 0; z < Z_LEN; z++){
             for (int y = 0; y < Y_LEN; y++) {
                 for (int x = 0; x < X_LEN; x++) {
                     short datum = cthead[z][y][x];
-                    pixels[z][y][x] = (((float)datum-(float)min)/((float)(max-min)));
+                    if (useEqualisation) {
+                        datum -= min;
+                    }
+                    pixels[z][y][x] = mapToPixelRange(datum);
                 }
             }
         }
         return pixels;
+    }
+
+    private float mapToPixelRange(short val) {
+        float res = ((float)val-(float)min)/((float)(max-min));
+        return Math.min(res, 1);
     }
 
     public void slice(int i){
@@ -160,6 +193,14 @@ public class Head {
         int newB = Math.round(b/scaleFactor);
         int newA = Math.round(a/scaleFactor);
         return pixelAt(newB, newA, i, view);
+    }
+
+    private float resizedPixelAtBL(int b, int a, int i, View view) {
+        return 0;
+    }
+
+    private float lerp(int v1, int v2, int p1, int p, int p2) {
+        return 0;
     }
 
     private  float resizedMipPixelAt(int b, int a, View view) {
@@ -249,6 +290,11 @@ public class Head {
 
     public void toggleMip() {
         mip = !mip;
+    }
+
+    public void toggleEqualisation() {
+        equalised = !equalised;
+        pixels = mapPixels(equalised);
     }
 
     public Image getImage() {

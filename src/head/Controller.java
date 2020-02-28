@@ -58,6 +58,13 @@ public class Controller {
         updateImage();
     }
 
+    @FXML
+    private void toggleEq() {
+        head.toggleEqualisation();
+        head.refresh();
+    }
+
+
     private void updateImage() {
         head.updateImageDimensions();
         head.refresh();
