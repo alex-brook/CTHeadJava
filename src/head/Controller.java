@@ -5,6 +5,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Slider;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
+import javafx.stage.Stage;
 
 import java.util.Objects;
 
@@ -18,8 +19,11 @@ public class Controller {
     private ComboBox<String> planeCombo;
     @FXML
     private ImageView medicalImage;
+    @FXML
+    private ImageView thumbImage;
 
     private Head head;
+    private Stage stage;
 
     @FXML
     public void initialize(){
@@ -29,6 +33,7 @@ public class Controller {
         planeCombo.setValue(planeCombo.getItems().get(0));
         zoomSlide.setMax(Head.MAX_SF);
         updateImage();
+        updateThumbnailImage();
     }
 
     @FXML
@@ -41,12 +46,14 @@ public class Controller {
     public void changeSlice() {
         head.slice((int) sliceSlide.getValue());
         updateImage();
+        updateThumbnailImage();
     }
 
     @FXML
     public void changeZoom() {
         head.setZoom((float) zoomSlide.getValue());
         updateImage();
+        resizeWindow();
     }
 
     @FXML
@@ -56,6 +63,8 @@ public class Controller {
         sliceSlide.setValue(Math.min(sliceSlide.getValue(), head.getMaxSlice()));
         sliceSlide.setMax(head.getMaxSlice());
         updateImage();
+        updateThumbnailImage();
+        resizeWindow();
     }
 
     @FXML
@@ -64,6 +73,15 @@ public class Controller {
         head.refresh();
     }
 
+    @FXML
+    private void toggleBilinear() {
+        head.toggleBilinear();
+        head.refresh();
+    }
+
+    public void setStage(Stage s) {
+        stage = s;
+    }
 
     private void updateImage() {
         head.updateImageDimensions();
@@ -71,5 +89,17 @@ public class Controller {
         medicalImage.setImage(head.getImage());
         medicalImage.setFitWidth(medicalImage.getImage().getWidth());
         medicalImage.setFitHeight(medicalImage.getImage().getHeight());
+    }
+
+    private void updateThumbnailImage() {
+        thumbImage.setImage(head.getThumbnailImage());
+        thumbImage.setFitHeight(thumbImage.getImage().getHeight());
+        thumbImage.setFitWidth(thumbImage.getImage().getWidth());
+    }
+
+    private void resizeWindow() {
+        if(stage != null) {
+            stage.sizeToScene();
+        }
     }
 }

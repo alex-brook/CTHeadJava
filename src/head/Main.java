@@ -6,11 +6,16 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
+import javax.naming.ldap.Control;
+
 public class Main extends Application {
 
     @Override
     public void start(Stage primaryStage) throws Exception{
-        Parent root = FXMLLoader.load(getClass().getResource("head.fxml"));
+        FXMLLoader fxl = new FXMLLoader();
+        Parent root = fxl.load(getClass().getResource("head.fxml").openStream());
+        Controller cont = fxl.getController();
+        cont.setStage(primaryStage);
         primaryStage.setTitle("CS-255 CThead");
         primaryStage.setScene(new Scene(root));
         primaryStage.show();

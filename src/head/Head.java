@@ -38,9 +38,9 @@ public class Head {
     private static final int Y_LEN = 256;
     private static final int X_LEN = 256;
 
-    private short[][][] cthead;
+    private int[][][] cthead;
     private float[][][] pixels;
-    private short[] equaliseMap;
+    private float[] equaliseMap;
 
     private float scaleFactor;
     private int currentSlice;
@@ -48,9 +48,10 @@ public class Head {
     private View currentView;
     private boolean mip;
     private boolean equalised;
+    private boolean bilinear;
 
-    private short max;
-    private short min;
+    private int max;
+    private int min;
     private WritableImage image;
     private int imageXLen;
     private int imageYLen;
@@ -64,17 +65,18 @@ public class Head {
         equaliseMap = equalise(cthead);
         equalised = false;
         pixels = mapPixels(equalised);
+        bilinear = false;
         setZoom(scaleFactor);
         setView(View.TOP);
         updateImageDimensions();
         refresh();
     }
 
-    public short[][][] load(String fname) {
+    private int[][][] load(String fname) {
         try {
             File file = new File(fname);
             DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)));
-            cthead = new short[Z_LEN][Y_LEN][X_LEN];
+            cthead = new int[Z_LEN][Y_LEN][X_LEN];
             min = Short.MAX_VALUE;
             max = Short.MIN_VALUE;
 
@@ -102,24 +104,29 @@ public class Head {
         }
     }
 
-    private short[] equalise(short[][][] cthead) {
+    private void loadThumbnails() {
+
+    }
+
+    private float[] equalise(int[][][] cthead) {
         int len = max - min + 1;
-        short[] hist = new short[len];
+        int[] hist = new int[len];
         for(int z = 0; z < Z_LEN; z++) {
             for (int y = 0; y < Y_LEN; y++) {
                 for (int x = 0; x < X_LEN; x++) {
-                    hist[cthead[z][y][x] - min]++;
+                    int index = cthead[z][y][x] - min;
+                    hist[index]++;
                 }
             }
         }
-
-        short[] cumDist = new short[len];
-        short t = hist[0];
-        cumDist[0] = t;
+        float[] cumSum = new float[len];
+        int t = hist[0];
+        cumSum[0] = (float) t / (Z_LEN * Y_LEN * X_LEN);
         for (int i = 1; i < len; i++) {
             t += hist[i];
+            cumSum[i] = (float) t / (Z_LEN * Y_LEN * X_LEN);
         }
-        return cumDist;
+        return cumSum;
     }
 
     private float[][][] mapPixels(boolean useEqualisation) {
@@ -127,18 +134,19 @@ public class Head {
         for (int z = 0; z < Z_LEN; z++){
             for (int y = 0; y < Y_LEN; y++) {
                 for (int x = 0; x < X_LEN; x++) {
-                    short datum = cthead[z][y][x];
+                    int datum = cthead[z][y][x];
                     if (useEqualisation) {
-                        datum -= min;
+                        pixels[z][y][x] = equaliseMap[cthead[z][y][x] - min];
+                    } else {
+                        pixels[z][y][x] = mapToPixelRange(datum);
                     }
-                    pixels[z][y][x] = mapToPixelRange(datum);
                 }
             }
         }
         return pixels;
     }
 
-    private float mapToPixelRange(short val) {
+    private float mapToPixelRange(int val) {
         float res = ((float)val-(float)min)/((float)(max-min));
         return Math.min(res, 1);
     }
@@ -152,21 +160,20 @@ public class Head {
         }
     }
 
-    public void drawMip() {
-        for (int y = 0; y < image.getHeight(); y++) {
-            for (int x = 0; x < image.getWidth(); x++) {
-                drawAt(x, y, resizedMipPixelAt(y, x, currentView));
-            }
-        }
+    private void drawAt(int x, int y, float val) {
+        drawAt(x, y, val, image);
     }
 
-
-    private void drawAt(int x, int y, float val) {
+    private void drawAt(int x, int y, float val, WritableImage img){
         Color c = new Color(val, val, val, 1);
-        image.getPixelWriter().setColor(x, y, c);
+        img.getPixelWriter().setColor(x, y, c);
     }
 
     private float pixelAt(int b, int a, int i, View view){
+        if(mip) {
+            return mipPixelAt(b, a, view);
+        }
+
         switch (view) {
             case TOP:
                 b = Math.min(b, Y_LEN - 1);
@@ -184,29 +191,51 @@ public class Head {
         return -1;
     }
 
-
-    private float resizedPixelAt(int b, int a, int i, View view){
-        return resizedPixelAtNN(b, a, i, view);
+    private float resizedPixelAt(int b, int a, int i, View view) {
+        return resizedPixelAt(b, a, i, view, scaleFactor);
     }
 
-    private float resizedPixelAtNN(int b, int a, int i, View view) {
-        int newB = Math.round(b/scaleFactor);
-        int newA = Math.round(a/scaleFactor);
+    private float resizedPixelAt(int b, int a, int i, View view, float sf){
+        if (bilinear) {
+            return resizedPixelAtBL(b, a, i, view, sf);
+        } else {
+            return resizedPixelAtNN(b, a, i, view, sf);
+        }
+    }
+
+    private float resizedPixelAtNN(int b, int a, int i, View view, float sf) {
+        int newB = Math.round(b/sf);
+        int newA = Math.round(a/sf);
         return pixelAt(newB, newA, i, view);
     }
 
-    private float resizedPixelAtBL(int b, int a, int i, View view) {
-        return 0;
+    private float resizedPixelAtBL(int b, int a, int i, View view, float sf) {
+        float newB = b / sf;
+        float  newA = a / sf;
+
+        if(b == newB && a == newA) {
+            return resizedPixelAtNN(b, a, i, view, sf);
+        }
+
+        int minB = (int) Math.floor(newB);
+        int minA = (int) Math.floor(newA);
+        int maxB = minB + 1;
+        int maxA = minA + 1;
+
+        double topVal = lerp(pixelAt(minB, minA, i, view),
+                pixelAt(minB, maxA, i, view),
+                minA, newA, maxA);
+        double botVal = lerp(pixelAt(maxB, minA, i, view),
+                pixelAt(maxB, maxA, i, view),
+                minA, newA, maxA);
+        double finVal = lerp(topVal, botVal, minB, newB, maxB);
+
+        return (float) finVal;
     }
 
-    private float lerp(int v1, int v2, int p1, int p, int p2) {
-        return 0;
-    }
-
-    private  float resizedMipPixelAt(int b, int a, View view) {
-        int newB = Math.round(b/scaleFactor);
-        int newA = Math.round(a/scaleFactor);
-        return mipPixelAt(newB, newA, view);
+    public double lerp(double v1, double v2, int p1, double p, int p2) {
+        double ratio = (p - p1) / (p2 - p1);
+        return v1 + (v2 - v1) * ratio;
     }
 
     private float mipPixelAt(int b, int a, View view) {
@@ -243,11 +272,7 @@ public class Head {
     }
 
     public void refresh() {
-        if (mip) {
-            drawMip();
-        } else {
-            slice(currentSlice);
-        }
+        slice(currentSlice);
     }
 
     public void updateImageDimensions() {
@@ -297,9 +322,53 @@ public class Head {
         pixels = mapPixels(equalised);
     }
 
+    public void toggleBilinear() {
+        bilinear = !bilinear;
+    }
+
     public Image getImage() {
         return image;
     }
+
+    public Image getThumbnailImage() {
+        final float THUMBNAIL_SF = 0.5f;
+        final int GAP = 5; //how many slices between thumbnails;
+        final int N = 3; // how many thumbnails
+        int thumbXLen = -1;
+        int thumbYLen = -1;
+
+        switch (currentView) {
+            case TOP:
+                thumbXLen = (int) (X_LEN * THUMBNAIL_SF);
+                thumbYLen = (int) (Y_LEN * THUMBNAIL_SF);
+                break;
+            case FRONT:
+                thumbXLen = (int) (X_LEN * THUMBNAIL_SF);
+                thumbYLen = (int) (Z_LEN * THUMBNAIL_SF);
+                break;
+            case SIDE:
+                thumbXLen = (int) (Y_LEN * THUMBNAIL_SF);
+                thumbYLen = (int) (Z_LEN * THUMBNAIL_SF);
+                break;
+        }
+
+        int imageX = thumbXLen * ((N * 2) + 1);
+        int imageY = thumbYLen;
+        WritableImage carousel = new WritableImage(imageX, imageY);
+        int startSlice = Math.max(0, currentSlice - (N * GAP));
+        int endSlice = Math.min(maxSlice, currentSlice + (N * GAP));
+        for(int slice = startSlice; slice <= endSlice; slice+=GAP) {
+            for (int y = 0; y < thumbYLen; y++){
+                for (int x = 0; x < thumbXLen; x++){
+                    float pix = resizedPixelAt(y, x, slice, currentView, THUMBNAIL_SF);
+                    int offset = ((slice - startSlice) / GAP) * thumbXLen;
+                    drawAt(x + offset, y, pix, carousel);
+                }
+            }
+        }
+        return carousel;
+    }
+
     public int getMaxSlice() {
         return maxSlice;
     }
